@@ -29,23 +29,9 @@
 
 ;;; Prerequisites
 
-;; We require radio-mode (another of my projects) for defining groups
-;; of files to process and index.
-
-;; http://github.com/dto/radio
-
-(require 'radio) 
-
-;; We also need Org for output formatting.
+;; We need Org for output formatting.
 
 (require 'org)
-
-;;; Test forms
-
-(defvar *ldoc-test* 
-  (make-radio-group :name "rlx"
-		   :base-directory "~/rlx/"
-		   :include "*\\.lisp$"))
 
 ;;; Definitions
 
@@ -95,6 +81,18 @@
 				;; scan to beginning of next form
 				"\\([[:space:]]+\\)"))
 
+(defvar ldoc-nextform-types '("function" "generic function" "macro" "method"
+			      "substitution" "compiler-macro"
+			      "class" "prototype" "method"))
+
+(defun ldoc-nextform-string (definition)
+  (let ((nextform (ldoc-definition-nextform definition)))
+    (if (member (ldoc-definition-type definition)
+		ldoc-nextform-types)
+	(if (null nextform)
+	    "()"
+	    (prin1-to-string nextform)))))
+
 (defun ldoc-format-type (type)
   (let ((pos (position-if (lambda (x)
 			    (string= type x))
@@ -104,7 +102,6 @@
 
 (defvar ldoc-blank-line-regexp "^[[:space:]]*$")
 
-;; (ldoc-next-definition)
 
 (defvar ldoc-doc-begin-regexp "^\\([[:space:]]*\\)\\(\"\\)")
 
@@ -143,8 +140,58 @@ line, and docstrings should always start on a fresh line."
 			  :docstring (ldoc-next-docstring)
 			  :file (buffer-file-name (current-buffer)))))
 
+;;; Producing an org buffer from a lisp file's documentation.
 
-    
+(defun ldoc-all-definitions ()
+  (save-excursion
+    (goto-char (point-min))
+    (let (def defs)
+      (while (setf def (ldoc-next-definition))
+	(push def defs))
+      defs)))
+
+(defun* ldoc-make-org-buffer (&optional (output-buffer-name "*ldoc-org-buffer*")
+					(input-buffer (current-buffer)))
+  (interactive)
+  (let ((output-buffer (get-buffer-create output-buffer-name))
+	(defs (ldoc-all-definitions)))
+    (prog1 output-buffer
+      ;; sort definitions
+      (setf defs (sort defs #'(lambda (d1 d2)
+				(string< (ldoc-definition-name d1)
+					 (ldoc-definition-name d2)))))
+      ;; print definitions
+      (with-current-buffer output-buffer
+	(delete-region (point-min) (point-max))
+	(dolist (def defs)
+	  (insert (format "* %s /%s/\n\n%s\n\n"
+			  (ldoc-definition-name def)
+			  (ldoc-nextform-string def)
+			  (ldoc-definition-docstring def))))))))
+
+;; TODO do not include long nextforms
+
+;;; Finding files to scan.
+
+(defvar ldoc-files '())
+
+(defvar ldoc-output-directory nil)
+
+(defun* ldoc-make-org-file (&optional (file (buffer-file-name (current-buffer))))
+  (interactive)
+  (let ((output-file (expand-file-name 
+		      (concat (file-name-nondirectory (file-name-sans-extension file))
+			      ".org")
+		      (file-name-as-directory ldoc-output-directory))))
+    (with-temp-buffer
+      (insert-file-contents-literally file)
+      (goto-char (point-min))
+      (with-current-buffer (ldoc-make-org-buffer)
+	(write-file output-file)))))
+  
+(let ((ldoc-output-directory "~/rlx/doc"))
+  (ldoc-make-org-file))
+
 ;;; Producing one big indexed HTML doc file for a group.
 
 
